@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 
 void main() {
   runApp(const MyApp());
@@ -17,8 +18,45 @@ class MyApp extends StatelessWidget {
   }
 }
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  String lastUpdate = 'hace unos segundos';
+  final String esp32Ip = 'http://192.168.1.100'; // ← Cambia esta IP
+
+  void _takePhoto() async {
+    try {
+      final response = await http.get(Uri.parse('$esp32Ip/foto'));
+      if (response.statusCode == 200) {
+        setState(() {
+          lastUpdate = 'actualizado ahora';
+        });
+        // Opcional: puedes guardar la imagen si lo necesitas.
+      } else {
+        print('Error al capturar imagen');
+      }
+    } catch (e) {
+      print('Error al conectar con ESP32: $e');
+    }
+  }
+
+  void _sendDoorCommand(String action) async {
+    try {
+      final response = await http.get(Uri.parse('$esp32Ip/$action'));
+      if (response.statusCode == 200) {
+        print('Puerta: $action');
+      } else {
+        print('Error al enviar comando de puerta');
+      }
+    } catch (e) {
+      print('Error al conectar con ESP32: $e');
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,14 +73,12 @@ class HomeScreen extends StatelessWidget {
           children: [
             const SizedBox(height: 20),
             CameraView(
-              onTakePhoto: () {
-                // Aquí va la lógica para tomar foto
-              },
-              lastUpdate: 'hace 2 minutos',
-              imagePath: 'assets/camera.jpg',
+              onTakePhoto: _takePhoto,
+              lastUpdate: lastUpdate,
+              imageUrl: '$esp32Ip/foto', // ← Vista directa desde la IP
             ),
             const SizedBox(height: 20),
-            const DoorControls(),
+            DoorControls(onAction: _sendDoorCommand),
             const SizedBox(height: 20),
             const StatusBar(),
             const SizedBox(height: 30),
@@ -61,13 +97,13 @@ class HomeScreen extends StatelessWidget {
 class CameraView extends StatelessWidget {
   final VoidCallback onTakePhoto;
   final String lastUpdate;
-  final String imagePath;
+  final String imageUrl;
 
   const CameraView({
     super.key,
     required this.onTakePhoto,
     required this.lastUpdate,
-    required this.imagePath,
+    required this.imageUrl,
   });
 
   @override
@@ -87,7 +123,7 @@ class CameraView extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 20),
       child: Column(
         children: [
-          // Vista de la cámara
+          // Vista de la cámara desde la red
           Container(
             height: 400,
             width: double.infinity,
@@ -98,28 +134,19 @@ class CameraView extends StatelessWidget {
                 topRight: Radius.circular(8),
               ),
             ),
-            child: imagePath.isNotEmpty
-                ? Image.asset(
-                    imagePath,
-                    width: double.infinity,
-                    height: 400,
-                    fit: BoxFit.cover,
-                  )
-                : const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(Icons.photo_camera, size: 50, color: Colors.grey),
-                        SizedBox(height: 10),
-                        Text(
-                          'Vista previa de la cámara',
-                          style: TextStyle(color: Colors.grey),
-                        ),
-                      ],
-                    ),
+            child: Image.network(
+              imageUrl,
+              fit: BoxFit.cover,
+              errorBuilder: (context, error, stackTrace) {
+                return const Center(
+                  child: Text(
+                    'No se pudo cargar la imagen',
+                    style: TextStyle(color: Colors.red),
                   ),
+                );
+              },
+            ),
           ),
-
           // Controles de la cámara
           Container(
             padding: const EdgeInsets.all(16),
@@ -152,7 +179,7 @@ class CameraView extends StatelessWidget {
                     ),
                   ),
                 ),
-                const SizedBox(height: 8), // Espacio entre el botón y el texto
+                const SizedBox(height: 8),
                 Text(
                   'Última actualización: $lastUpdate',
                   style: const TextStyle(fontWeight: FontWeight.w500),
@@ -167,19 +194,27 @@ class CameraView extends StatelessWidget {
 }
 
 class DoorControls extends StatelessWidget {
-  const DoorControls({super.key});
+  final void Function(String action) onAction;
+
+  const DoorControls({super.key, required this.onAction});
 
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _doorButton(icon: '🔓', color: const Color(0xff2ecc71), label: 'Abrir'),
+        _doorButton(
+          icon: '🔓',
+          color: const Color(0xff2ecc71),
+          label: 'Abrir',
+          onTap: () => onAction('abrir'),
+        ),
         const SizedBox(width: 20),
         _doorButton(
           icon: '🔒',
           color: const Color(0xffe74c3c),
           label: 'Cerrar',
+          onTap: () => onAction('cerrar'),
         ),
       ],
     );
@@ -189,11 +224,12 @@ class DoorControls extends StatelessWidget {
     required String icon,
     required Color color,
     required String label,
+    required VoidCallback onTap,
   }) {
     return Column(
       children: [
         InkWell(
-          onTap: () {},
+          onTap: onTap,
           child: Container(
             width: 80,
             height: 80,
