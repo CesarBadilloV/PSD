@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'dart:developer' as developer;
 
 void main() {
   runApp(const MyApp());
@@ -38,10 +39,10 @@ class _HomeScreenState extends State<HomeScreen> {
         });
         // Opcional: puedes guardar la imagen si lo necesitas.
       } else {
-        print('Error al capturar imagen');
+        developer.log('Error al capturar imagen');
       }
     } catch (e) {
-      print('Error al conectar con ESP32: $e');
+      developer.log('Error al conectar con ESP32: $e');
     }
   }
 
@@ -49,12 +50,12 @@ class _HomeScreenState extends State<HomeScreen> {
     try {
       final response = await http.get(Uri.parse('$esp32Ip/$action'));
       if (response.statusCode == 200) {
-        print('Puerta: $action');
+        developer.log('Puerta: $action');
       } else {
-        print('Error al enviar comando de puerta');
+        developer.log('Error al enviar comando de puerta');
       }
     } catch (e) {
-      print('Error al conectar con ESP32: $e');
+      developer.log('Error al conectar con ESP32: $e');
     }
   }
 
