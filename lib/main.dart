@@ -4,6 +4,8 @@ import 'dart:developer' as developer;
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'package:gallery_saver/gallery_saver.dart';
+import 'dart:convert';
+import 'dart:async';
 
 void main() {
   runApp(const MyApp());
@@ -30,8 +32,48 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  String estadoPuerta = 'Desconocido';
+  String deteccionMovimiento = 'Desconocido';
+  String conexion = 'Desconocido';
   String lastUpdate = 'hace unos segundos';
-  final String esp32Ip = 'http://192.168.1.100'; // ← Cambia esta IP
+  Timer? _estadoTimer;
+
+  final String esp32Ip =
+      'http://192.168.1.100'; // Cambia esta IP si es necesario
+
+  @override
+  void initState() {
+    super.initState();
+    _actualizarEstado();
+    _estadoTimer = Timer.periodic(
+      const Duration(seconds: 5), // ⏱️ cada 5 segundos
+      (timer) => _actualizarEstado(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _estadoTimer?.cancel(); // Cancela el Timer si está activo
+    super.dispose();
+  }
+
+  void _actualizarEstado() async {
+    try {
+      final response = await http.get(Uri.parse('$esp32Ip/estado'));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        setState(() {
+          estadoPuerta = data['puerta'] ?? 'Desconocido';
+          deteccionMovimiento = data['movimiento'] ?? 'Desconocido';
+          conexion = data['conexion'] ?? 'Desconocido';
+        });
+      } else {
+        developer.log('Error al obtener estado');
+      }
+    } catch (e) {
+      developer.log('Error al conectar con ESP32: $e');
+    }
+  }
 
   void _takePhoto() async {
     try {
@@ -68,6 +110,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final response = await http.get(Uri.parse('$esp32Ip/$action'));
       if (response.statusCode == 200) {
         developer.log('Puerta: $action');
+        _actualizarEstado(); // actualiza estado tras acción
       } else {
         developer.log('Error al enviar comando de puerta');
       }
@@ -93,12 +136,16 @@ class _HomeScreenState extends State<HomeScreen> {
             CameraView(
               onTakePhoto: _takePhoto,
               lastUpdate: lastUpdate,
-              imageUrl: '$esp32Ip/foto', // ← Vista directa desde la IP
+              imageUrl: '$esp32Ip/foto',
             ),
             const SizedBox(height: 20),
             DoorControls(onAction: _sendDoorCommand),
             const SizedBox(height: 20),
-            const StatusBar(),
+            StatusBar(
+              estadoPuerta: estadoPuerta,
+              deteccion: deteccionMovimiento,
+              conexion: conexion,
+            ),
             const SizedBox(height: 30),
             const Text(
               'Universidad Tecnológica de Tamaulipas Norte - TSU en Tecnologías de la Información\n© 2025 - Proyecto Final',
@@ -268,7 +315,16 @@ class DoorControls extends StatelessWidget {
 }
 
 class StatusBar extends StatelessWidget {
-  const StatusBar({super.key});
+  final String estadoPuerta;
+  final String deteccion;
+  final String conexion;
+
+  const StatusBar({
+    super.key,
+    required this.estadoPuerta,
+    required this.deteccion,
+    required this.conexion,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -281,14 +337,14 @@ class StatusBar extends StatelessWidget {
       padding: const EdgeInsets.all(16),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: const [
-          _StatusItem(title: 'Estado de la puerta', value: 'Cerrada'),
+        children: [
+          _StatusItem(title: 'Estado de la puerta', value: estadoPuerta),
           _StatusItem(
             title: 'Detección de movimiento',
-            value: 'Activo',
-            isAlert: true,
+            value: deteccion,
+            isAlert: deteccion.toLowerCase().contains('movimiento'),
           ),
-          _StatusItem(title: 'Conexión', value: 'Estable'),
+          _StatusItem(title: 'Conexión', value: conexion),
         ],
       ),
     );
