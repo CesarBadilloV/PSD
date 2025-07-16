@@ -62,40 +62,97 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _actualizarEstado() async {
     try {
+      developer.log('Intentando conectar con el ESP32...');
+
       final response = await http
           .get(Uri.parse('$esp32Ip/estado'))
-          .timeout(const Duration(seconds: 3));
+          .timeout(const Duration(seconds: 10));
+
+      developer.log('Respuesta recibida: ${response.statusCode}');
+      developer.log('Cuerpo de respuesta: ${response.body}');
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        setState(() {
-          // Ajusta según los valores que envía el ESP32
-          estadoPuerta = data['puerta'] == 'abierta' ? 'Abierta' : 'Cerrada';
-          deteccionMovimiento =
-              data['movimiento'].toString().contains('detectado')
-              ? 'Movimiento detectado'
-              : 'Sin movimiento';
-          conexion = 'Conectado';
-          lastUpdate =
-              'Actualizado: ${DateTime.now().toString().substring(11, 19)}';
-        });
+        try {
+          // Limpiar la respuesta de posibles caracteres extraños
+          String cleanResponse = response.body.trim();
+          developer.log('Respuesta limpia: $cleanResponse');
 
-        await dbHelper.insertarEvento(estadoPuerta, deteccionMovimiento);
+          // Validar que sea un JSON válido
+          if (cleanResponse.isEmpty || !cleanResponse.startsWith('{')) {
+            developer.log('Respuesta no es JSON válido');
+            setState(() {
+              conexion = 'Formato inválido';
+            });
+            return;
+          }
+
+          final data = jsonDecode(cleanResponse);
+          developer.log('Datos decodificados: $data');
+
+          setState(() {
+            // Manejo más robusto de los datos con valores por defecto
+            String puertaValue = data['puerta']?.toString() ?? 'desconocida';
+            estadoPuerta = puertaValue == 'abierta' ? 'Abierta' : 'Cerrada';
+
+            String movimientoValue =
+                data['movimiento']?.toString() ?? 'desconocido';
+            deteccionMovimiento = movimientoValue == 'detectado'
+                ? 'Movimiento detectado'
+                : 'Sin movimiento';
+
+            conexion = 'Conectado';
+            lastUpdate =
+                'Actualizado: ${DateTime.now().toString().substring(11, 19)}';
+          });
+
+          developer.log(
+            'Estado actualizado - Puerta: $estadoPuerta, Movimiento: $deteccionMovimiento',
+          );
+
+          // Guardar en base de datos solo si los datos son válidos
+          if (estadoPuerta != 'Desconocido' &&
+              deteccionMovimiento != 'Desconocido') {
+            await dbHelper.insertarEvento(estadoPuerta, deteccionMovimiento);
+          }
+        } catch (jsonError) {
+          developer.log('Error al decodificar JSON: $jsonError');
+          developer.log('Respuesta que causó el error: ${response.body}');
+          setState(() {
+            conexion =
+                'Error JSON: ${jsonError.toString().substring(0, 20)}...';
+          });
+        }
       } else {
+        developer.log('Error HTTP: ${response.statusCode}');
         setState(() {
-          conexion = 'Error ${response.statusCode}';
+          conexion = 'Error HTTP ${response.statusCode}';
         });
       }
-    } on TimeoutException {
-      setState(() => conexion = 'Timeout');
+    } on TimeoutException catch (e) {
+      developer.log('Timeout: $e');
+      setState(() {
+        conexion = 'Timeout de conexión';
+      });
+    } on SocketException catch (e) {
+      developer.log('Error de conexión: $e');
+      setState(() {
+        conexion = 'Sin conexión de red';
+      });
     } catch (e) {
-      setState(() => conexion = 'Error: $e');
+      developer.log('Error general: $e');
+      setState(() {
+        conexion = 'Error: ${e.toString().substring(0, 30)}...';
+      });
     }
   }
 
   void _takePhoto() async {
     try {
-      final response = await http.get(Uri.parse('$esp32Ip/foto'));
+      developer.log('Tomando foto...');
+
+      final response = await http
+          .get(Uri.parse('$esp32Ip/foto'))
+          .timeout(const Duration(seconds: 15)); // Timeout más largo para fotos
 
       if (response.statusCode == 200) {
         final directory = await getTemporaryDirectory();
@@ -113,30 +170,96 @@ class _HomeScreenState extends State<HomeScreen> {
         );
 
         setState(() {
-          lastUpdate = 'Guardada y actualizada ahora';
+          lastUpdate =
+              'Foto guardada: ${DateTime.now().toString().substring(11, 19)}';
         });
 
         // Guardar registro de foto en la base
         await dbHelper.insertarFoto(filePath);
+
+        // Mostrar mensaje de éxito
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Foto guardada exitosamente'),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       } else {
-        developer.log('Error al capturar imagen');
+        developer.log('Error al capturar imagen: ${response.statusCode}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error al capturar imagen: ${response.statusCode}'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     } catch (e) {
       developer.log('Error al conectar con ESP32: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Error de conexión: ${e.toString().substring(0, 30)}...',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
   void _sendDoorCommand(String action) async {
     try {
-      final response = await http.get(Uri.parse('$esp32Ip/$action'));
+      developer.log('Enviando comando: $action');
+
+      final response = await http
+          .get(Uri.parse('$esp32Ip/$action'))
+          .timeout(const Duration(seconds: 10));
+
       if (response.statusCode == 200) {
-        developer.log('Puerta: $action');
-        _actualizarEstado(); // actualiza estado tras acción
+        developer.log('Comando enviado exitosamente: $action');
+
+        // Actualizar estado inmediatamente
+        _actualizarEstado();
+
+        // Mostrar mensaje de éxito
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'Puerta ${action == 'abrir' ? 'abierta' : 'cerrada'} exitosamente',
+              ),
+              backgroundColor: Colors.green,
+            ),
+          );
+        }
       } else {
-        developer.log('Error al enviar comando de puerta');
+        developer.log('Error al enviar comando: ${response.statusCode}');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error al $action puerta: $response.statusCode'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
       }
     } catch (e) {
       developer.log('Error al conectar con ESP32: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Error de conexión: ${e.toString().substring(0, 30)}...',
+            ),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -160,7 +283,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -170,6 +292,7 @@ class _HomeScreenState extends State<HomeScreen> {
               onTakePhoto: _takePhoto,
               lastUpdate: lastUpdate,
               imageUrl: '$esp32Ip/foto',
+              streamUrl: '$esp32Ip/stream',
             ),
             const SizedBox(height: 20),
             DoorControls(onAction: _sendDoorCommand),
@@ -192,19 +315,43 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// Reemplaza tu clase CameraView con esta versión actualizada:
-
-class CameraView extends StatelessWidget {
+class CameraView extends StatefulWidget {
   final VoidCallback onTakePhoto;
   final String lastUpdate;
   final String imageUrl;
+  final String streamUrl;
 
   const CameraView({
     super.key,
     required this.onTakePhoto,
     required this.lastUpdate,
     required this.imageUrl,
+    required this.streamUrl,
   });
+
+  @override
+  State<CameraView> createState() => _CameraViewState();
+}
+
+class _CameraViewState extends State<CameraView> {
+  String _imageKey = '0';
+  bool _isLoading = false;
+
+  void _refreshImage() {
+    setState(() {
+      _imageKey = DateTime.now().millisecondsSinceEpoch.toString();
+      _isLoading = true;
+    });
+
+    // Simular carga
+    Timer(const Duration(milliseconds: 500), () {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -223,7 +370,7 @@ class CameraView extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 20),
       child: Column(
         children: [
-          // Vista del stream de video en tiempo real
+          // Vista de la cámara
           Container(
             height: 400,
             width: double.infinity,
@@ -239,45 +386,85 @@ class CameraView extends StatelessWidget {
                 topLeft: Radius.circular(8),
                 topRight: Radius.circular(8),
               ),
-              child: Image.network(
-                imageUrl.replaceAll('/foto', '/stream'), // Cambiar a stream
-                fit: BoxFit.cover,
-                loadingBuilder: (context, child, loadingProgress) {
-                  if (loadingProgress == null) return child;
-                  return const Center(child: CircularProgressIndicator());
-                },
-                errorBuilder: (context, error, stackTrace) {
-                  return const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.camera_alt_outlined,
-                          size: 50,
-                          color: Colors.grey,
+              child: Stack(
+                children: [
+                  // Imagen de la cámara
+                  Image.network(
+                    '${widget.imageUrl}?v=$_imageKey',
+                    fit: BoxFit.cover,
+                    width: double.infinity,
+                    height: double.infinity,
+                    loadingBuilder: (context, child, loadingProgress) {
+                      if (loadingProgress == null) return child;
+                      return const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(),
+                            SizedBox(height: 10),
+                            Text('Cargando imagen...'),
+                          ],
                         ),
-                        SizedBox(height: 10),
-                        Text(
-                          'Cámara no disponible',
-                          style: TextStyle(color: Colors.red),
+                      );
+                    },
+                    errorBuilder: (context, error, stackTrace) {
+                      developer.log('Error cargando imagen: $error');
+                      return const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.camera_alt_outlined,
+                              size: 50,
+                              color: Colors.grey,
+                            ),
+                            SizedBox(height: 10),
+                            Text(
+                              'Cámara no disponible',
+                              style: TextStyle(color: Colors.red),
+                            ),
+                            Text(
+                              'Verificar conexión ESP32',
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
                         ),
-                        Text(
-                          'Verificar conexión ESP32',
-                          style: TextStyle(color: Colors.grey, fontSize: 12),
+                      );
+                    },
+                  ),
+                  // Overlay de carga
+                  if (_isLoading)
+                    Container(
+                      color: Colors.black.withAlpha(
+                        77,
+                      ), // 77 es equivalente a 30% de opacidad // Esto es válido
+                      child: const Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            CircularProgressIndicator(color: Colors.white),
+                            SizedBox(height: 10),
+                            Text(
+                              'Actualizando...',
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          ],
                         ),
-                      ],
+                      ),
                     ),
-                  );
-                },
+                ],
               ),
             ),
           ),
           // Controles de la cámara
           Container(
             padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: const Color(0xFFecf0f1),
-              borderRadius: const BorderRadius.only(
+            decoration: const BoxDecoration(
+              color: Color(0xFFecf0f1),
+              borderRadius: BorderRadius.only(
                 bottomLeft: Radius.circular(8),
                 bottomRight: Radius.circular(8),
               ),
@@ -288,7 +475,7 @@ class CameraView extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
                     ElevatedButton.icon(
-                      onPressed: onTakePhoto,
+                      onPressed: widget.onTakePhoto,
                       icon: const Icon(Icons.camera_alt, color: Colors.white),
                       label: const Text(
                         'Guardar foto',
@@ -306,14 +493,10 @@ class CameraView extends StatelessWidget {
                       ),
                     ),
                     ElevatedButton.icon(
-                      onPressed: () {
-                        // Recargar stream si hay problemas
-                        // Esto fuerza un rebuild del widget
-                        (context as Element).markNeedsBuild();
-                      },
+                      onPressed: _refreshImage,
                       icon: const Icon(Icons.refresh, color: Colors.white),
                       label: const Text(
-                        'Recargar',
+                        'Actualizar',
                         style: TextStyle(
                           color: Colors.white,
                           fontWeight: FontWeight.w600,
@@ -331,7 +514,7 @@ class CameraView extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Video en tiempo real • $lastUpdate',
+                  'Imagen actual • ${widget.lastUpdate}',
                   style: const TextStyle(
                     fontWeight: FontWeight.w500,
                     color: Colors.green,
@@ -339,7 +522,7 @@ class CameraView extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Stream MJPEG activo',
+                  'Presiona "Actualizar" para ver imagen reciente',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
@@ -429,7 +612,7 @@ class StatusBar extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
       ),
-      padding: const EdgeInsets.all(16), // Mueve el padding aquí
+      padding: const EdgeInsets.all(16),
       child: Column(
         children: [
           Row(
@@ -456,8 +639,18 @@ class StatusBar extends StatelessWidget {
               _StatusItem(
                 title: 'Conexión',
                 value: conexion,
-                icon: conexion.contains('Error') ? Icons.wifi_off : Icons.wifi,
-                color: conexion.contains('Error') ? Colors.red : Colors.green,
+                icon:
+                    conexion.contains('Error') ||
+                        conexion.contains('Sin conexión') ||
+                        conexion.contains('Timeout')
+                    ? Icons.wifi_off
+                    : Icons.wifi,
+                color:
+                    conexion.contains('Error') ||
+                        conexion.contains('Sin conexión') ||
+                        conexion.contains('Timeout')
+                    ? Colors.red
+                    : Colors.green,
               ),
             ],
           ),
