@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:developer' as developer;
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
+import 'package:gallery_saver/gallery_saver.dart';
 
 void main() {
   runApp(const MyApp());
@@ -33,11 +36,25 @@ class _HomeScreenState extends State<HomeScreen> {
   void _takePhoto() async {
     try {
       final response = await http.get(Uri.parse('$esp32Ip/foto'));
+
       if (response.statusCode == 200) {
+        final directory = await getTemporaryDirectory();
+        final filePath =
+            '${directory.path}/captura_${DateTime.now().millisecondsSinceEpoch}.jpg';
+        final file = File(filePath);
+        await file.writeAsBytes(response.bodyBytes);
+
+        // Guardar en galería
+        final result = await GallerySaver.saveImage(file.path);
+        developer.log(
+          result == true
+              ? 'Imagen guardada correctamente'
+              : 'No se pudo guardar la imagen',
+        );
+
         setState(() {
-          lastUpdate = 'actualizado ahora';
+          lastUpdate = 'Guardada y actualizada ahora';
         });
-        // Opcional: puedes guardar la imagen si lo necesitas.
       } else {
         developer.log('Error al capturar imagen');
       }
@@ -163,17 +180,14 @@ class CameraView extends StatelessWidget {
                 ElevatedButton(
                   onPressed: onTakePhoto,
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF3498db),
+                    backgroundColor: const Color(0xFF27ae60),
                     padding: const EdgeInsets.symmetric(
                       horizontal: 20,
                       vertical: 12,
                     ),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(4),
-                    ),
                   ),
                   child: const Text(
-                    'Tomar foto',
+                    'Guardar foto',
                     style: TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w600,
