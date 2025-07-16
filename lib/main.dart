@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:async';
 import 'database_helper.dart';
 import 'database_viewer.dart';
+import 'package:flutter_mjpeg/flutter_mjpeg.dart';
 
 void main() {
   runApp(const MyApp());
@@ -334,16 +335,14 @@ class CameraView extends StatefulWidget {
 }
 
 class _CameraViewState extends State<CameraView> {
-  String _imageKey = '0';
   bool _isLoading = false;
 
-  void _refreshImage() {
+  void _simulateRefresh() {
     setState(() {
-      _imageKey = DateTime.now().millisecondsSinceEpoch.toString();
       _isLoading = true;
     });
 
-    // Simular carga
+    // Simula que "actualiza" para mostrar el overlay
     Timer(const Duration(milliseconds: 500), () {
       if (mounted) {
         setState(() {
@@ -370,7 +369,7 @@ class _CameraViewState extends State<CameraView> {
       margin: const EdgeInsets.only(bottom: 20),
       child: Column(
         children: [
-          // Vista de la cámara
+          // Vista de la cámara en vivo
           Container(
             height: 400,
             width: double.infinity,
@@ -388,43 +387,27 @@ class _CameraViewState extends State<CameraView> {
               ),
               child: Stack(
                 children: [
-                  // Imagen de la cámara
-                  Image.network(
-                    '${widget.imageUrl}?v=$_imageKey',
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    height: double.infinity,
-                    loadingBuilder: (context, child, loadingProgress) {
-                      if (loadingProgress == null) return child;
-                      return const Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            CircularProgressIndicator(),
-                            SizedBox(height: 10),
-                            Text('Cargando imagen...'),
-                          ],
-                        ),
-                      );
-                    },
-                    errorBuilder: (context, error, stackTrace) {
-                      developer.log('Error cargando imagen: $error');
+                  Mjpeg(
+                    stream: widget.streamUrl,
+                    isLive: true,
+                    error: (context, error, stack) {
+                      developer.log('Error de transmisión: $error');
                       return const Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             Icon(
-                              Icons.camera_alt_outlined,
+                              Icons.videocam_off,
                               size: 50,
                               color: Colors.grey,
                             ),
                             SizedBox(height: 10),
                             Text(
-                              'Cámara no disponible',
+                              'Transmisión no disponible',
                               style: TextStyle(color: Colors.red),
                             ),
                             Text(
-                              'Verificar conexión ESP32',
+                              'Verifica conexión del ESP32',
                               style: TextStyle(
                                 color: Colors.grey,
                                 fontSize: 12,
@@ -435,12 +418,9 @@ class _CameraViewState extends State<CameraView> {
                       );
                     },
                   ),
-                  // Overlay de carga
                   if (_isLoading)
                     Container(
-                      color: Colors.black.withAlpha(
-                        77,
-                      ), // 77 es equivalente a 30% de opacidad // Esto es válido
+                      color: Colors.black.withAlpha(77),
                       child: const Center(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
@@ -459,7 +439,7 @@ class _CameraViewState extends State<CameraView> {
               ),
             ),
           ),
-          // Controles de la cámara
+          // Controles
           Container(
             padding: const EdgeInsets.all(16),
             decoration: const BoxDecoration(
@@ -493,7 +473,7 @@ class _CameraViewState extends State<CameraView> {
                       ),
                     ),
                     ElevatedButton.icon(
-                      onPressed: _refreshImage,
+                      onPressed: _simulateRefresh,
                       icon: const Icon(Icons.refresh, color: Colors.white),
                       label: const Text(
                         'Actualizar',
@@ -522,7 +502,7 @@ class _CameraViewState extends State<CameraView> {
                 ),
                 const SizedBox(height: 4),
                 const Text(
-                  'Presiona "Actualizar" para ver imagen reciente',
+                  'La transmisión es en vivo desde tu ESP32',
                   style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
