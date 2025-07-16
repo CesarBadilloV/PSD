@@ -636,22 +636,22 @@ class StatusBar extends StatelessWidget {
                     ? Colors.orange
                     : Colors.grey,
               ),
-              _StatusItem(
-                title: 'Conexión',
-                value: conexion,
-                icon:
-                    conexion.contains('Error') ||
-                        conexion.contains('Sin conexión') ||
-                        conexion.contains('Timeout')
-                    ? Icons.wifi_off
-                    : Icons.wifi,
-                color:
-                    conexion.contains('Error') ||
-                        conexion.contains('Sin conexión') ||
-                        conexion.contains('Timeout')
-                    ? Colors.red
-                    : Colors.green,
-              ),
+              // _StatusItem(
+              //   title: 'Conexión',
+              //   value: conexion,
+              //   icon:
+              //       conexion.contains('Error') ||
+              //           conexion.contains('Sin conexión') ||
+              //           conexion.contains('Timeout')
+              //       ? Icons.wifi_off
+              //       : Icons.wifi,
+              //   color:
+              //       conexion.contains('Error') ||
+              //           conexion.contains('Sin conexión') ||
+              //           conexion.contains('Timeout')
+              //       ? Colors.red
+              //       : Colors.green,
+              // ),
             ],
           ),
           const SizedBox(height: 10),
