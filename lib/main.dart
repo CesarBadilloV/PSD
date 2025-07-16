@@ -6,6 +6,7 @@ import 'dart:io';
 import 'package:gallery_saver/gallery_saver.dart';
 import 'dart:convert';
 import 'dart:async';
+import 'database_helper.dart';
 
 void main() {
   runApp(const MyApp());
@@ -37,6 +38,8 @@ class _HomeScreenState extends State<HomeScreen> {
   String conexion = 'Desconocido';
   String lastUpdate = 'hace unos segundos';
   Timer? _estadoTimer;
+  // Instancia de la base de datos
+  final DatabaseHelper dbHelper = DatabaseHelper();
 
   final String esp32Ip =
       'http://172.16.45.228'; // Cambia esta IP si es necesario
