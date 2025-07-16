@@ -70,6 +70,9 @@ class _HomeScreenState extends State<HomeScreen> {
           deteccionMovimiento = data['movimiento'] ?? 'Desconocido';
           conexion = data['conexion'] ?? 'Desconocido';
         });
+
+        // Guardar evento en base
+        await dbHelper.insertarEvento(estadoPuerta, deteccionMovimiento);
       } else {
         developer.log('Error al obtener estado');
       }
@@ -100,6 +103,9 @@ class _HomeScreenState extends State<HomeScreen> {
         setState(() {
           lastUpdate = 'Guardada y actualizada ahora';
         });
+
+        // Guardar registro de foto en la base
+        await dbHelper.insertarFoto(filePath);
       } else {
         developer.log('Error al capturar imagen');
       }
