@@ -7,6 +7,7 @@ import 'package:gallery_saver/gallery_saver.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'database_helper.dart';
+import 'database_viewer.dart';
 
 void main() {
   runApp(const MyApp());
@@ -136,7 +137,19 @@ class _HomeScreenState extends State<HomeScreen> {
         title: const Text('Timbre Inteligente con Cámara'),
         centerTitle: true,
         backgroundColor: const Color(0xff2c3e50),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.storage),
+            tooltip: 'Ver registros',
+            onPressed: () {
+              Navigator.of(
+                context,
+              ).push(MaterialPageRoute(builder: (_) => const DatabaseViewer()));
+            },
+          ),
+        ],
       ),
+
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
