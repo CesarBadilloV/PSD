@@ -39,7 +39,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Timer? _estadoTimer;
 
   final String esp32Ip =
-      'http://192.168.1.100'; // Cambia esta IP si es necesario
+      'http://172.16.45.228'; // Cambia esta IP si es necesario
 
   @override
   void initState() {
