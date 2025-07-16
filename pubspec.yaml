@@ -31,12 +31,13 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  http: ^0.15.0
+  http: ^0.13.6
   cupertino_icons: ^1.0.8
   # Esto es para poder tomar fotos y guardarlas
   path_provider: ^2.0.11
   permission_handler: ^11.0.1
   gallery_saver: ^2.3.0
+  sqflite: ^2.2.8+4
 
 dev_dependencies:
   flutter_test:
