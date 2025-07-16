@@ -42,8 +42,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // Instancia de la base de datos
   final DatabaseHelper dbHelper = DatabaseHelper();
 
-  final String esp32Ip =
-      'http://172.16.45.228'; // Cambia esta IP si es necesario
+  final String esp32Ip = 'http://172.20.10.2'; // Cambia esta IP si es necesario
 
   @override
   void initState() {
@@ -63,22 +62,34 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _actualizarEstado() async {
     try {
-      final response = await http.get(Uri.parse('$esp32Ip/estado'));
+      final response = await http
+          .get(Uri.parse('$esp32Ip/estado'))
+          .timeout(const Duration(seconds: 3));
+
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         setState(() {
-          estadoPuerta = data['puerta'] ?? 'Desconocido';
-          deteccionMovimiento = data['movimiento'] ?? 'Desconocido';
-          conexion = data['conexion'] ?? 'Desconocido';
+          // Ajusta según los valores que envía el ESP32
+          estadoPuerta = data['puerta'] == 'abierta' ? 'Abierta' : 'Cerrada';
+          deteccionMovimiento =
+              data['movimiento'].toString().contains('detectado')
+              ? 'Movimiento detectado'
+              : 'Sin movimiento';
+          conexion = 'Conectado';
+          lastUpdate =
+              'Actualizado: ${DateTime.now().toString().substring(11, 19)}';
         });
 
-        // Guardar evento en base
         await dbHelper.insertarEvento(estadoPuerta, deteccionMovimiento);
       } else {
-        developer.log('Error al obtener estado');
+        setState(() {
+          conexion = 'Error ${response.statusCode}';
+        });
       }
+    } on TimeoutException {
+      setState(() => conexion = 'Timeout');
     } catch (e) {
-      developer.log('Error al conectar con ESP32: $e');
+      setState(() => conexion = 'Error: $e');
     }
   }
 
@@ -181,6 +192,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+// Reemplaza tu clase CameraView con esta versión actualizada:
+
 class CameraView extends StatelessWidget {
   final VoidCallback onTakePhoto;
   final String lastUpdate;
@@ -210,7 +223,7 @@ class CameraView extends StatelessWidget {
       margin: const EdgeInsets.only(bottom: 20),
       child: Column(
         children: [
-          // Vista de la cámara desde la red
+          // Vista del stream de video en tiempo real
           Container(
             height: 400,
             width: double.infinity,
@@ -221,17 +234,42 @@ class CameraView extends StatelessWidget {
                 topRight: Radius.circular(8),
               ),
             ),
-            child: Image.network(
-              imageUrl,
-              fit: BoxFit.cover,
-              errorBuilder: (context, error, stackTrace) {
-                return const Center(
-                  child: Text(
-                    'No se pudo cargar la imagen',
-                    style: TextStyle(color: Colors.red),
-                  ),
-                );
-              },
+            child: ClipRRect(
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(8),
+                topRight: Radius.circular(8),
+              ),
+              child: Image.network(
+                imageUrl.replaceAll('/foto', '/stream'), // Cambiar a stream
+                fit: BoxFit.cover,
+                loadingBuilder: (context, child, loadingProgress) {
+                  if (loadingProgress == null) return child;
+                  return const Center(child: CircularProgressIndicator());
+                },
+                errorBuilder: (context, error, stackTrace) {
+                  return const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.camera_alt_outlined,
+                          size: 50,
+                          color: Colors.grey,
+                        ),
+                        SizedBox(height: 10),
+                        Text(
+                          'Cámara no disponible',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                        Text(
+                          'Verificar conexión ESP32',
+                          style: TextStyle(color: Colors.grey, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  );
+                },
+              ),
             ),
           ),
           // Controles de la cámara
@@ -246,27 +284,63 @@ class CameraView extends StatelessWidget {
             ),
             child: Column(
               children: [
-                ElevatedButton(
-                  onPressed: onTakePhoto,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF27ae60),
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 20,
-                      vertical: 12,
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                  children: [
+                    ElevatedButton.icon(
+                      onPressed: onTakePhoto,
+                      icon: const Icon(Icons.camera_alt, color: Colors.white),
+                      label: const Text(
+                        'Guardar foto',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF27ae60),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
+                      ),
                     ),
-                  ),
-                  child: const Text(
-                    'Guardar foto',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontWeight: FontWeight.w600,
+                    ElevatedButton.icon(
+                      onPressed: () {
+                        // Recargar stream si hay problemas
+                        // Esto fuerza un rebuild del widget
+                        (context as Element).markNeedsBuild();
+                      },
+                      icon: const Icon(Icons.refresh, color: Colors.white),
+                      label: const Text(
+                        'Recargar',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF3498db),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 12,
+                        ),
+                      ),
                     ),
-                  ),
+                  ],
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Última actualización: $lastUpdate',
-                  style: const TextStyle(fontWeight: FontWeight.w500),
+                  'Video en tiempo real • $lastUpdate',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w500,
+                    color: Colors.green,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Stream MJPEG activo',
+                  style: TextStyle(fontSize: 12, color: Colors.grey),
                 ),
               ],
             ),
@@ -354,19 +428,44 @@ class StatusBar extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(8),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 10)],
       ),
-      padding: const EdgeInsets.all(16),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
+      padding: const EdgeInsets.all(16), // Mueve el padding aquí
+      child: Column(
         children: [
-          _StatusItem(title: 'Estado de la puerta', value: estadoPuerta),
-          _StatusItem(
-            title: 'Detección de movimiento',
-            value: deteccion,
-            isAlert: deteccion.toLowerCase().contains('movimiento'),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _StatusItem(
+                title: 'Puerta',
+                value: estadoPuerta,
+                icon: estadoPuerta.contains('Abierta')
+                    ? Icons.lock_open
+                    : Icons.lock,
+                color: estadoPuerta.contains('Abierta')
+                    ? Colors.green
+                    : Colors.red,
+              ),
+              _StatusItem(
+                title: 'Movimiento',
+                value: deteccion,
+                icon: Icons.motion_photos_on,
+                color: deteccion.contains('detectado')
+                    ? Colors.orange
+                    : Colors.grey,
+              ),
+              _StatusItem(
+                title: 'Conexión',
+                value: conexion,
+                icon: conexion.contains('Error') ? Icons.wifi_off : Icons.wifi,
+                color: conexion.contains('Error') ? Colors.red : Colors.green,
+              ),
+            ],
           ),
-          _StatusItem(title: 'Conexión', value: conexion),
+          const SizedBox(height: 10),
+          Text(
+            'Última actualización: ${DateTime.now().toString().substring(0, 16)}',
+            style: TextStyle(color: Colors.grey[600], fontSize: 12),
+          ),
         ],
       ),
     );
@@ -376,18 +475,22 @@ class StatusBar extends StatelessWidget {
 class _StatusItem extends StatelessWidget {
   final String title;
   final String value;
-  final bool isAlert;
+  final IconData icon;
+  final Color color;
 
   const _StatusItem({
     required this.title,
     required this.value,
-    this.isAlert = false,
+    required this.icon,
+    required this.color,
   });
 
   @override
   Widget build(BuildContext context) {
     return Column(
       children: [
+        Icon(icon, size: 30, color: color),
+        const SizedBox(height: 5),
         Text(
           title,
           style: const TextStyle(fontSize: 12, color: Colors.black54),
@@ -396,9 +499,9 @@ class _StatusItem extends StatelessWidget {
         Text(
           value,
           style: TextStyle(
-            fontSize: 16,
+            fontSize: 14,
             fontWeight: FontWeight.bold,
-            color: isAlert ? const Color(0xffe74c3c) : Colors.black,
+            color: color,
           ),
         ),
       ],
