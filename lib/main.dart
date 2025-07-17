@@ -43,12 +43,12 @@ class _HomeScreenState extends State<HomeScreen> {
   final DatabaseHelper dbHelper = DatabaseHelper();
 
   // Configuración de conexión (¡Actualiza con tu IP correcta!)
-  final String esp32Ip = 'http://172.20.10.2'; // Cambiar por tu IP real
+  final String esp32Ip = 'http://172.20.10.2/stream'; // Cambiar por tu IP real
   final int esp32Port = 80;
 
   // Constructor de URLs unificado
   Uri _buildEsp32Url(String endpoint) {
-    return Uri.parse('$esp32Ip:/$endpoint');
+    return Uri.parse('$esp32Ip/$endpoint');
   }
 
   @override
