@@ -63,86 +63,35 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _actualizarEstado() async {
     try {
-      developer.log('Intentando conectar con el ESP32...');
-
       final response = await http
           .get(Uri.parse('$esp32Ip/estado'))
-          .timeout(const Duration(seconds: 10));
-
-      developer.log('Respuesta recibida: ${response.statusCode}');
-      developer.log('Cuerpo de respuesta: ${response.body}');
+          .timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
-        try {
-          // Limpiar la respuesta de posibles caracteres extraños
-          String cleanResponse = response.body.trim();
-          developer.log('Respuesta limpia: $cleanResponse');
+        final cleanBody = response.body.trim().replaceAll('\n', '');
+        developer.log('Respuesta cruda: $cleanBody');
 
-          // Validar que sea un JSON válido
-          if (cleanResponse.isEmpty || !cleanResponse.startsWith('{')) {
-            developer.log('Respuesta no es JSON válido');
-            setState(() {
-              conexion = 'Formato inválido';
-            });
-            return;
-          }
+        final data = jsonDecode(cleanBody) as Map<String, dynamic>;
 
-          final data = jsonDecode(cleanResponse);
-          developer.log('Datos decodificados: $data');
-
-          setState(() {
-            // Manejo más robusto de los datos con valores por defecto
-            String puertaValue = data['puerta']?.toString() ?? 'desconocida';
-            estadoPuerta = puertaValue == 'abierta' ? 'Abierta' : 'Cerrada';
-
-            String movimientoValue =
-                data['movimiento']?.toString() ?? 'desconocido';
-            deteccionMovimiento = movimientoValue == 'detectado'
-                ? 'Movimiento detectado'
-                : 'Sin movimiento';
-
-            conexion = 'Conectado';
-            lastUpdate =
-                'Actualizado: ${DateTime.now().toString().substring(11, 19)}';
-          });
-
-          developer.log(
-            'Estado actualizado - Puerta: $estadoPuerta, Movimiento: $deteccionMovimiento',
-          );
-
-          // Guardar en base de datos solo si los datos son válidos
-          if (estadoPuerta != 'Desconocido' &&
-              deteccionMovimiento != 'Desconocido') {
-            await dbHelper.insertarEvento(estadoPuerta, deteccionMovimiento);
-          }
-        } catch (jsonError) {
-          developer.log('Error al decodificar JSON: $jsonError');
-          developer.log('Respuesta que causó el error: ${response.body}');
-          setState(() {
-            conexion =
-                'Error JSON: ${jsonError.toString().substring(0, 20)}...';
-          });
-        }
-      } else {
-        developer.log('Error HTTP: ${response.statusCode}');
         setState(() {
-          conexion = 'Error HTTP ${response.statusCode}';
+          estadoPuerta = data['puerta'] == 'abierta' ? 'Abierta' : 'Cerrada';
+          deteccionMovimiento = data['movimiento'] == 'detectado'
+              ? 'Movimiento detectado'
+              : 'Sin movimiento';
+          conexion = 'Conectado';
+          lastUpdate =
+              'Última actualización: ${DateTime.now().toString().substring(11, 19)}';
         });
+
+        // Guardar en base de datos
+        await dbHelper.insertarEvento(estadoPuerta, deteccionMovimiento);
+      } else {
+        throw Exception('HTTP ${response.statusCode}');
       }
-    } on TimeoutException catch (e) {
-      developer.log('Timeout: $e');
-      setState(() {
-        conexion = 'Timeout de conexión';
-      });
-    } on SocketException catch (e) {
-      developer.log('Error de conexión: $e');
-      setState(() {
-        conexion = 'Sin conexión de red';
-      });
     } catch (e) {
-      developer.log('Error general: $e');
+      developer.log('Error al actualizar estado: $e');
       setState(() {
-        conexion = 'Error: ${e.toString().substring(0, 30)}...';
+        conexion = 'Error: ${e.toString().split(':').first}';
       });
     }
   }
@@ -221,42 +170,40 @@ class _HomeScreenState extends State<HomeScreen> {
           .get(Uri.parse('$esp32Ip/$action'))
           .timeout(const Duration(seconds: 10));
 
-      if (response.statusCode == 200) {
-        developer.log('Comando enviado exitosamente: $action');
+      developer.log('Respuesta: ${response.statusCode} - ${response.body}');
 
-        // Actualizar estado inmediatamente
+      if (response.statusCode == 200) {
+        // Espera 1 segundo antes de actualizar para dar tiempo al ESP32
+        await Future.delayed(const Duration(seconds: 1));
         _actualizarEstado();
 
-        // Mostrar mensaje de éxito
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text(
-                'Puerta ${action == 'abrir' ? 'abierta' : 'cerrada'} exitosamente',
-              ),
+              content: Text('Comando $action enviado correctamente'),
               backgroundColor: Colors.green,
             ),
           );
         }
       } else {
-        developer.log('Error al enviar comando: ${response.statusCode}');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error al $action puerta: $response.statusCode'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
+        throw Exception('HTTP ${response.statusCode}');
+      }
+    } on TimeoutException {
+      developer.log('Timeout al $action puerta');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Timeout: El ESP32 no respondió'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } catch (e) {
-      developer.log('Error al conectar con ESP32: $e');
+      developer.log('Error al $action puerta: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(
-              'Error de conexión: ${e.toString().substring(0, 30)}...',
-            ),
+            content: Text('Error: ${e.toString()}'),
             backgroundColor: Colors.red,
           ),
         );
@@ -385,57 +332,36 @@ class _CameraViewState extends State<CameraView> {
                 topLeft: Radius.circular(8),
                 topRight: Radius.circular(8),
               ),
-              child: Stack(
-                children: [
-                  Mjpeg(
-                    stream: widget.streamUrl,
-                    isLive: true,
-                    error: (context, error, stack) {
-                      developer.log('Error de transmisión: $error');
-                      return const Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.videocam_off,
-                              size: 50,
-                              color: Colors.grey,
-                            ),
-                            SizedBox(height: 10),
-                            Text(
-                              'Transmisión no disponible',
-                              style: TextStyle(color: Colors.red),
-                            ),
-                            Text(
-                              'Verifica conexión del ESP32',
-                              style: TextStyle(
-                                color: Colors.grey,
-                                fontSize: 12,
-                              ),
-                            ),
-                          ],
+              child: Mjpeg(
+                stream: widget.streamUrl,
+                isLive: true,
+                timeout: const Duration(seconds: 5),
+                error: (context, error, stack) {
+                  return Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.wifi_off,
+                          size: 50,
+                          color: Colors.grey,
                         ),
-                      );
-                    },
-                  ),
-                  if (_isLoading)
-                    Container(
-                      color: Colors.black.withAlpha(77),
-                      child: const Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            CircularProgressIndicator(color: Colors.white),
-                            SizedBox(height: 10),
-                            Text(
-                              'Actualizando...',
-                              style: TextStyle(color: Colors.white),
-                            ),
-                          ],
+                        const SizedBox(height: 10),
+                        Text(
+                          'Error de transmisión: ${error.toString()}',
+                          style: const TextStyle(color: Colors.red),
+                          textAlign: TextAlign.center,
                         ),
-                      ),
+                        ElevatedButton(
+                          onPressed: () {
+                            setState(() {});
+                          },
+                          child: const Text('Reintentar'),
+                        ),
+                      ],
                     ),
-                ],
+                  );
+                },
               ),
             ),
           ),
