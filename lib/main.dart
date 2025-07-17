@@ -37,72 +37,91 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   String estadoPuerta = 'Desconocido';
   String deteccionMovimiento = 'Desconocido';
-  String conexion = 'Desconocido';
   String lastUpdate = 'hace unos segundos';
   Timer? _estadoTimer;
-  // Instancia de la base de datos
+  bool _isConnected = false;
   final DatabaseHelper dbHelper = DatabaseHelper();
 
-  final String esp32Ip = 'http://172.20.10.2'; // Cambia esta IP si es necesario
+  // Configuración de conexión (¡Actualiza con tu IP correcta!)
+  final String esp32Ip = 'http://172.20.10.2'; // Cambiar por tu IP real
+  final int esp32Port = 80;
+
+  // Constructor de URLs unificado
+  Uri _buildEsp32Url(String endpoint) {
+    return Uri.parse('$esp32Ip:/$endpoint');
+  }
 
   @override
   void initState() {
     super.initState();
-    _actualizarEstado();
+    _verifyConnection();
     _estadoTimer = Timer.periodic(
-      const Duration(seconds: 5), // ⏱️ cada 5 segundos
-      (timer) => _actualizarEstado(),
+      const Duration(seconds: 5),
+      (timer) => _isConnected ? _actualizarEstado() : _verifyConnection(),
     );
   }
 
   @override
   void dispose() {
-    _estadoTimer?.cancel(); // Cancela el Timer si está activo
+    _estadoTimer?.cancel();
     super.dispose();
   }
 
-  void _actualizarEstado() async {
+  Future<void> _verifyConnection() async {
     try {
       final response = await http
-          .get(Uri.parse('$esp32Ip/estado'))
-          .timeout(const Duration(seconds: 5));
+          .get(_buildEsp32Url(''))
+          .timeout(const Duration(seconds: 2));
+      setState(() => _isConnected = response.statusCode == 200);
+      if (_isConnected) _actualizarEstado();
+    } catch (e) {
+      setState(() => _isConnected = false);
+      developer.log('Error de conexión: $e');
+    }
+  }
+
+  Future<void> _actualizarEstado() async {
+    if (!_isConnected) return;
+
+    try {
+      developer.log('Consultando estado en: ${_buildEsp32Url('estado')}');
+      final response = await http
+          .get(_buildEsp32Url('estado'))
+          .timeout(const Duration(seconds: 3));
 
       if (response.statusCode == 200) {
-        final cleanBody = response.body.trim().replaceAll('\n', '');
-        developer.log('Respuesta cruda: $cleanBody');
-
-        final data = jsonDecode(cleanBody) as Map<String, dynamic>;
+        final data = jsonDecode(response.body.trim()) as Map<String, dynamic>;
+        developer.log('Datos recibidos: $data');
 
         setState(() {
           estadoPuerta = data['puerta'] == 'abierta' ? 'Abierta' : 'Cerrada';
           deteccionMovimiento = data['movimiento'] == 'detectado'
               ? 'Movimiento detectado'
               : 'Sin movimiento';
-          conexion = 'Conectado';
           lastUpdate =
-              'Última actualización: ${DateTime.now().toString().substring(11, 19)}';
+              'Últ. actualización: ${DateTime.now().toString().substring(11, 19)}';
         });
 
-        // Guardar en base de datos
         await dbHelper.insertarEvento(estadoPuerta, deteccionMovimiento);
       } else {
         throw Exception('HTTP ${response.statusCode}');
       }
     } catch (e) {
       developer.log('Error al actualizar estado: $e');
-      setState(() {
-        conexion = 'Error: ${e.toString().split(':').first}';
-      });
+      setState(() => _isConnected = false);
     }
   }
 
-  void _takePhoto() async {
-    try {
-      developer.log('Tomando foto...');
+  Future<void> _takePhoto() async {
+    if (!_isConnected) {
+      _showSnackBar('No hay conexión con el ESP32');
+      return;
+    }
 
+    try {
       final response = await http
-          .get(Uri.parse('$esp32Ip/foto'))
-          .timeout(const Duration(seconds: 15)); // Timeout más largo para fotos
+          .get(_buildEsp32Url('foto'))
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         final directory = await getTemporaryDirectory();
@@ -111,103 +130,63 @@ class _HomeScreenState extends State<HomeScreen> {
         final file = File(filePath);
         await file.writeAsBytes(response.bodyBytes);
 
-        // Guardar en galería
-        final result = await GallerySaver.saveImage(file.path);
-        developer.log(
-          result == true
-              ? 'Imagen guardada correctamente'
-              : 'No se pudo guardar la imagen',
-        );
+        await GallerySaver.saveImage(file.path);
+        await dbHelper.insertarFoto(filePath);
 
         setState(() {
           lastUpdate =
               'Foto guardada: ${DateTime.now().toString().substring(11, 19)}';
         });
 
-        // Guardar registro de foto en la base
-        await dbHelper.insertarFoto(filePath);
-
-        // Mostrar mensaje de éxito
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Foto guardada exitosamente'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
-      } else {
-        developer.log('Error al capturar imagen: ${response.statusCode}');
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error al capturar imagen: ${response.statusCode}'),
-              backgroundColor: Colors.red,
-            ),
-          );
-        }
-      }
-    } catch (e) {
-      developer.log('Error al conectar con ESP32: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Error de conexión: ${e.toString().substring(0, 30)}...',
-            ),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    }
-  }
-
-  void _sendDoorCommand(String action) async {
-    try {
-      developer.log('Enviando comando: $action');
-
-      final response = await http
-          .get(Uri.parse('$esp32Ip/$action'))
-          .timeout(const Duration(seconds: 10));
-
-      developer.log('Respuesta: ${response.statusCode} - ${response.body}');
-
-      if (response.statusCode == 200) {
-        // Espera 1 segundo antes de actualizar para dar tiempo al ESP32
-        await Future.delayed(const Duration(seconds: 1));
-        _actualizarEstado();
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Comando $action enviado correctamente'),
-              backgroundColor: Colors.green,
-            ),
-          );
-        }
+        _showSnackBar('Foto guardada exitosamente', isError: false);
       } else {
         throw Exception('HTTP ${response.statusCode}');
       }
-    } on TimeoutException {
-      developer.log('Timeout al $action puerta');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Timeout: El ESP32 no respondió'),
-            backgroundColor: Colors.red,
-          ),
+    } catch (e) {
+      developer.log('Error al tomar foto: $e');
+      _showSnackBar('Error al capturar foto: ${e.toString().split(':').first}');
+    }
+  }
+
+  Future<void> _sendDoorCommand(String action) async {
+    if (!_isConnected) {
+      _showSnackBar('No hay conexión con el ESP32');
+      return;
+    }
+
+    try {
+      final response = await http
+          .get(_buildEsp32Url(action))
+          .timeout(const Duration(seconds: 5));
+
+      developer.log(
+        'Respuesta comando $action: ${response.statusCode} - ${response.body}',
+      );
+
+      if (response.statusCode == 200) {
+        await Future.delayed(const Duration(seconds: 1));
+        _actualizarEstado();
+        _showSnackBar(
+          'Puerta ${action == 'abrir' ? 'abierta' : 'cerrada'}',
+          isError: false,
         );
+      } else {
+        throw Exception('HTTP ${response.statusCode}');
       }
     } catch (e) {
       developer.log('Error al $action puerta: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: ${e.toString()}'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
+      _showSnackBar('Error al ${action}ar puerta');
+    }
+  }
+
+  void _showSnackBar(String message, {bool isError = true}) {
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: isError ? Colors.red : Colors.green,
+        ),
+      );
     }
   }
 
@@ -216,18 +195,16 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       backgroundColor: const Color(0xfff5f5f5),
       appBar: AppBar(
-        title: const Text('Timbre Inteligente con Cámara'),
+        title: const Text('Timbre Inteligente'),
         centerTitle: true,
         backgroundColor: const Color(0xff2c3e50),
         actions: [
           IconButton(
             icon: const Icon(Icons.storage),
-            tooltip: 'Ver registros',
-            onPressed: () {
-              Navigator.of(
-                context,
-              ).push(MaterialPageRoute(builder: (_) => const DatabaseViewer()));
-            },
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const DatabaseViewer()),
+            ),
           ),
         ],
       ),
@@ -235,24 +212,30 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
+            _buildConnectionStatus(),
             const SizedBox(height: 20),
             CameraView(
-              onTakePhoto: _takePhoto,
+              onTakePhoto: _isConnected ? _takePhoto : null,
               lastUpdate: lastUpdate,
-              imageUrl: '$esp32Ip/foto',
-              streamUrl: '$esp32Ip/stream',
+              imageUrl: _buildEsp32Url('foto').toString(),
+              streamUrl: _isConnected
+                  ? _buildEsp32Url('stream').toString()
+                  : '',
             ),
             const SizedBox(height: 20),
-            DoorControls(onAction: _sendDoorCommand),
+            DoorControls(
+              onAction: _isConnected ? _sendDoorCommand : null,
+              isConnected: _isConnected,
+            ),
             const SizedBox(height: 20),
             StatusBar(
               estadoPuerta: estadoPuerta,
               deteccion: deteccionMovimiento,
-              conexion: conexion,
+              conexion: _isConnected ? 'Conectado' : 'Desconectado',
             ),
             const SizedBox(height: 30),
             const Text(
-              'Universidad Tecnológica de Tamaulipas Norte - TSU en Tecnologías de la Información\n© 2025 - Proyecto Final',
+              'Universidad Tecnológica de Tamaulipas Norte\n© 2025 - Proyecto Final',
               style: TextStyle(fontSize: 12, color: Colors.black54),
               textAlign: TextAlign.center,
             ),
@@ -261,10 +244,52 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
     );
   }
+
+  Widget _buildConnectionStatus() {
+    return Card(
+      color: _isConnected ? Colors.green[50] : Colors.red[50],
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  _isConnected ? Icons.wifi : Icons.wifi_off,
+                  color: _isConnected ? Colors.green : Colors.red,
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  _isConnected ? 'CONECTADO' : 'SIN CONEXIÓN',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: _isConnected ? Colors.green : Colors.red,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Endpoint: ${_buildEsp32Url('').toString()}',
+              style: const TextStyle(fontSize: 12),
+            ),
+            if (!_isConnected) ...[
+              const SizedBox(height: 8),
+              ElevatedButton(
+                onPressed: _verifyConnection,
+                child: const Text('Reintentar conexión'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
 
 class CameraView extends StatefulWidget {
-  final VoidCallback onTakePhoto;
+  final VoidCallback? onTakePhoto;
   final String lastUpdate;
   final String imageUrl;
   final String streamUrl;
@@ -285,17 +310,9 @@ class _CameraViewState extends State<CameraView> {
   bool _isLoading = false;
 
   void _simulateRefresh() {
-    setState(() {
-      _isLoading = true;
-    });
-
-    // Simula que "actualiza" para mostrar el overlay
+    setState(() => _isLoading = true);
     Timer(const Duration(milliseconds: 500), () {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() => _isLoading = false);
     });
   }
 
@@ -313,67 +330,36 @@ class _CameraViewState extends State<CameraView> {
           ),
         ],
       ),
-      margin: const EdgeInsets.only(bottom: 20),
       child: Column(
         children: [
-          // Vista de la cámara en vivo
           Container(
             height: 400,
-            width: double.infinity,
             decoration: BoxDecoration(
               color: Colors.grey[300],
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(8),
-                topRight: Radius.circular(8),
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(8),
               ),
             ),
-            child: ClipRRect(
-              borderRadius: const BorderRadius.only(
-                topLeft: Radius.circular(8),
-                topRight: Radius.circular(8),
-              ),
-              child: Mjpeg(
-                stream: widget.streamUrl,
-                isLive: true,
-                timeout: const Duration(seconds: 5),
-                error: (context, error, stack) {
-                  return Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        const Icon(
-                          Icons.wifi_off,
-                          size: 50,
-                          color: Colors.grey,
-                        ),
-                        const SizedBox(height: 10),
-                        Text(
-                          'Error de transmisión: ${error.toString()}',
-                          style: const TextStyle(color: Colors.red),
-                          textAlign: TextAlign.center,
-                        ),
-                        ElevatedButton(
-                          onPressed: () {
-                            setState(() {});
-                          },
-                          child: const Text('Reintentar'),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-            ),
+            child: widget.streamUrl.isNotEmpty
+                ? Stack(
+                    children: [
+                      Mjpeg(
+                        stream: widget.streamUrl,
+                        isLive: true,
+                        timeout: const Duration(seconds: 5),
+                        error: (context, error, stack) =>
+                            _buildErrorWidget(error),
+                      ),
+                      if (_isLoading) _buildLoadingOverlay(),
+                    ],
+                  )
+                : _buildDisconnectedOverlay(),
           ),
-          // Controles
           Container(
             padding: const EdgeInsets.all(16),
             decoration: const BoxDecoration(
               color: Color(0xFFecf0f1),
-              borderRadius: BorderRadius.only(
-                bottomLeft: Radius.circular(8),
-                bottomRight: Radius.circular(8),
-              ),
+              borderRadius: BorderRadius.vertical(bottom: Radius.circular(8)),
             ),
             child: Column(
               children: [
@@ -383,53 +369,27 @@ class _CameraViewState extends State<CameraView> {
                     ElevatedButton.icon(
                       onPressed: widget.onTakePhoto,
                       icon: const Icon(Icons.camera_alt, color: Colors.white),
-                      label: const Text(
-                        'Guardar foto',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                      label: const Text('Guardar foto'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF27ae60),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 12,
-                        ),
+                        foregroundColor: Colors.white,
                       ),
                     ),
                     ElevatedButton.icon(
                       onPressed: _simulateRefresh,
                       icon: const Icon(Icons.refresh, color: Colors.white),
-                      label: const Text(
-                        'Actualizar',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+                      label: const Text('Actualizar'),
                       style: ElevatedButton.styleFrom(
                         backgroundColor: const Color(0xFF3498db),
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 12,
-                        ),
+                        foregroundColor: Colors.white,
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Imagen actual • ${widget.lastUpdate}',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w500,
-                    color: Colors.green,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                const Text(
-                  'La transmisión es en vivo desde tu ESP32',
-                  style: TextStyle(fontSize: 12, color: Colors.grey),
+                  'Estado: ${widget.lastUpdate}',
+                  style: const TextStyle(color: Colors.green),
                 ),
               ],
             ),
@@ -438,40 +398,97 @@ class _CameraViewState extends State<CameraView> {
       ),
     );
   }
+
+  Widget _buildErrorWidget(dynamic error) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.videocam_off, size: 50, color: Colors.grey),
+          const SizedBox(height: 10),
+          Text(
+            'Error: ${error.toString()}',
+            style: const TextStyle(color: Colors.red),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDisconnectedOverlay() {
+    return const Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(Icons.wifi_off, size: 50, color: Colors.grey),
+          SizedBox(height: 10),
+          Text('Cámara no disponible'),
+          Text(
+            'Conecta el dispositivo al ESP32',
+            style: TextStyle(fontSize: 12),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildLoadingOverlay() {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.black.withAlpha(128),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withAlpha(50),
+            blurRadius: 10,
+            offset: Offset(0, 2),
+          ),
+        ],
+      ),
+      child: const Center(
+        child: CircularProgressIndicator(color: Colors.white),
+      ),
+    );
+  }
 }
 
 class DoorControls extends StatelessWidget {
-  final void Function(String action) onAction;
+  final void Function(String)? onAction;
+  final bool isConnected;
 
-  const DoorControls({super.key, required this.onAction});
+  const DoorControls({
+    super.key,
+    required this.onAction,
+    required this.isConnected,
+  });
 
   @override
   Widget build(BuildContext context) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        _doorButton(
+        _buildDoorButton(
           icon: '🔓',
-          color: const Color(0xff2ecc71),
+          color: isConnected ? const Color(0xff2ecc71) : Colors.grey,
           label: 'Abrir',
-          onTap: () => onAction('abrir'),
+          onTap: onAction != null ? () => onAction!('abrir') : null,
         ),
         const SizedBox(width: 20),
-        _doorButton(
+        _buildDoorButton(
           icon: '🔒',
-          color: const Color(0xffe74c3c),
+          color: isConnected ? const Color(0xffe74c3c) : Colors.grey,
           label: 'Cerrar',
-          onTap: () => onAction('cerrar'),
+          onTap: onAction != null ? () => onAction!('cerrar') : null,
         ),
       ],
     );
   }
 
-  Widget _doorButton({
+  Widget _buildDoorButton({
     required String icon,
     required Color color,
     required String label,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
   }) {
     return Column(
       children: [
@@ -483,8 +500,12 @@ class DoorControls extends StatelessWidget {
             decoration: BoxDecoration(
               color: color,
               shape: BoxShape.circle,
-              boxShadow: const [
-                BoxShadow(color: Colors.black26, blurRadius: 6),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withAlpha(128),
+                  blurRadius: 6,
+                  offset: Offset(0, 2),
+                ),
               ],
             ),
             child: Center(
@@ -524,7 +545,7 @@ class StatusBar extends StatelessWidget {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
-              _StatusItem(
+              _buildStatusItem(
                 title: 'Puerta',
                 value: estadoPuerta,
                 icon: estadoPuerta.contains('Abierta')
@@ -534,7 +555,7 @@ class StatusBar extends StatelessWidget {
                     ? Colors.green
                     : Colors.red,
               ),
-              _StatusItem(
+              _buildStatusItem(
                 title: 'Movimiento',
                 value: deteccion,
                 icon: Icons.motion_photos_on,
@@ -542,58 +563,30 @@ class StatusBar extends StatelessWidget {
                     ? Colors.orange
                     : Colors.grey,
               ),
-              // _StatusItem(
-              //   title: 'Conexión',
-              //   value: conexion,
-              //   icon:
-              //       conexion.contains('Error') ||
-              //           conexion.contains('Sin conexión') ||
-              //           conexion.contains('Timeout')
-              //       ? Icons.wifi_off
-              //       : Icons.wifi,
-              //   color:
-              //       conexion.contains('Error') ||
-              //           conexion.contains('Sin conexión') ||
-              //           conexion.contains('Timeout')
-              //       ? Colors.red
-              //       : Colors.green,
-              // ),
+              _buildStatusItem(
+                title: 'Conexión',
+                value: conexion,
+                icon: conexion == 'Conectado' ? Icons.wifi : Icons.wifi_off,
+                color: conexion == 'Conectado' ? Colors.green : Colors.red,
+              ),
             ],
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Última actualización: ${DateTime.now().toString().substring(0, 16)}',
-            style: TextStyle(color: Colors.grey[600], fontSize: 12),
           ),
         ],
       ),
     );
   }
-}
 
-class _StatusItem extends StatelessWidget {
-  final String title;
-  final String value;
-  final IconData icon;
-  final Color color;
-
-  const _StatusItem({
-    required this.title,
-    required this.value,
-    required this.icon,
-    required this.color,
-  });
-
-  @override
-  Widget build(BuildContext context) {
+  Widget _buildStatusItem({
+    required String title,
+    required String value,
+    required IconData icon,
+    required Color color,
+  }) {
     return Column(
       children: [
         Icon(icon, size: 30, color: color),
         const SizedBox(height: 5),
-        Text(
-          title,
-          style: const TextStyle(fontSize: 12, color: Colors.black54),
-        ),
+        Text(title, style: const TextStyle(fontSize: 12)),
         const SizedBox(height: 4),
         Text(
           value,
